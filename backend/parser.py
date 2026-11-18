@@ -46,18 +46,22 @@ def _extract_chinese_date(text: str) -> str:
     if "昨天" in text:
         return _today_str(-1)
 
+    ymd = re.search(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})", text)
+    if ymd:
+        return f"{ymd.group(1)}-{int(ymd.group(2)):02d}-{int(ymd.group(3)):02d}"
+
     md = re.search(r"(\d{1,2})月(\d{1,2})[日号]", text)
     if md:
         return f"{now.year}-{int(md.group(1)):02d}-{int(md.group(2)):02d}"
 
-    wk = re.search(r"(?:本周|这周|下周)?周([一二三四五六日天])", text)
+    wk = re.search(r"(本|这|下)?(?:周|星期|礼拜)([一二三四五六日天])", text)
     if wk:
         wk_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7}
-        target = wk_map[wk.group(1)]
+        target = wk_map[wk.group(2)]
         current = now.isoweekday()
         diff = target - current
-        if "下周" in wk.group(0):
-            diff += 7
+        if wk.group(1) == "下":
+            diff = target - current + 7
         elif diff < 0:
             diff += 7
         return _today_str(diff)
@@ -81,35 +85,67 @@ def _cn_num_to_int(s: str) -> Optional[int]:
     return None
 
 
+_CN_NUM = r"[0-9一二两三四五六七八九十]{1,3}"
+_PERIOD = r"(早上|上午|中午|下午|晚上)"
+
+
+def _to_24h(period: Optional[str], h: int) -> int:
+    if period in ("下午", "晚上") and h < 12:
+        return h + 12
+    if period == "中午" and h < 11:
+        return h + 12
+    return h
+
+
+def _cn_minutes(half: Optional[str], minute: Optional[str]) -> str:
+    if half == "半":
+        return "30"
+    if minute:
+        m_val = _cn_num_to_int(minute)
+        return f"{m_val:02d}" if m_val is not None else "00"
+    return "00"
+
+
 def _extract_chinese_time(text: str) -> tuple[str, str]:
-    rng = re.search(r"(\d{1,2})[:：](\d{2})\s*[-~到至]\s*(\d{1,2})[:：](\d{2})", text)
+    rng = re.search(r"(\d{1,2})[:：](\d{2})\s*[-~—到至]\s*(\d{1,2})[:：](\d{2})", text)
     if rng:
+        period = re.search(_PERIOD + r"\s*$", text[: rng.start()])
+        p = period.group(1) if period else None
         return (
-            f"{int(rng.group(1)):02d}:{rng.group(2)}",
-            f"{int(rng.group(3)):02d}:{rng.group(4)}",
+            f"{_to_24h(p, int(rng.group(1))):02d}:{rng.group(2)}",
+            f"{_to_24h(p, int(rng.group(3))):02d}:{rng.group(4)}",
         )
 
     single = re.search(r"(\d{1,2})[:：](\d{2})", text)
     if single:
-        h = int(single.group(1))
-        m = single[2] if isinstance(single, tuple) else single.group(2)
+        period = re.search(_PERIOD + r"\s*$", text[: single.start()])
+        h = _to_24h(period.group(1) if period else None, int(single.group(1)))
+        m = single.group(2)
         return f"{h:02d}:{m}", f"{(h + 1) % 24:02d}:{m}"
 
-    cn = re.search(r"(早上|上午|中午|下午|晚上)?\s*([0-9一二两三四五六七八九十]{1,3})点(半|([0-9一二三四五六七八九十]{1,3})分?)?", text)
+    # 中文时间段：下午2点到4点半 / 晚上七点至九点
+    cn_rng = re.search(
+        _PERIOD + r"?\s*(" + _CN_NUM + r")点(半|(" + _CN_NUM + r")分?)?\s*[-~—到至]\s*(" + _CN_NUM + r")点(半|(" + _CN_NUM + r")分?)?",
+        text,
+    )
+    if cn_rng:
+        h1, h2 = _cn_num_to_int(cn_rng.group(2)), _cn_num_to_int(cn_rng.group(5))
+        if h1 is not None and h2 is not None:
+            p = cn_rng.group(1)
+            sh, eh = _to_24h(p, h1), _to_24h(p, h2)
+            if eh < sh:  # 如“上午11点到1点”
+                eh += 12
+            return (
+                f"{sh:02d}:{_cn_minutes(cn_rng.group(3), cn_rng.group(4))}",
+                f"{eh % 24:02d}:{_cn_minutes(cn_rng.group(6), cn_rng.group(7))}",
+            )
+
+    cn = re.search(_PERIOD + r"?\s*(" + _CN_NUM + r")点(半|(" + _CN_NUM + r")分?)?", text)
     if cn:
         h = _cn_num_to_int(cn.group(2))
         if h is not None:
-            if cn.group(1) in ("下午", "晚上") and h < 12:
-                h += 12
-            elif cn.group(1) == "中午" and h < 11:
-                h += 12
-            if cn.group(3) == "半":
-                m = "30"
-            elif cn.group(4):
-                m_val = _cn_num_to_int(cn.group(4))
-                m = f"{m_val:02d}" if m_val is not None else "00"
-            else:
-                m = "00"
+            h = _to_24h(cn.group(1), h)
+            m = _cn_minutes(cn.group(3), cn.group(4))
             return f"{h:02d}:{m}", f"{(h + 1) % 24:02d}:{m}"
 
     return "09:00", "10:00"
@@ -129,6 +165,55 @@ def _guess_category(text: str) -> str:
     return "其他"
 
 
+# 地点：先吃掉地名主体，再带上后面的房间号（如 教学楼A302、学生活动中心201、3号楼201）
+_LOC_RE = re.compile(
+    r"(?:在|地点[：:]?\s*)\s*"
+    r"([A-Za-z0-9一-龥\-]*?(?:会议室|教室|中心|校区|食堂|礼堂|操场|楼|室|厅|馆|院)"
+    r"[A-Za-z]?[0-9\-]*)"
+)
+_DATE_WORDS_RE = re.compile(
+    r"(?:本|这|下)?(?:周|星期|礼拜)[一二三四五六日天]|明天|后天|今天|昨天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号]"
+)
+_TIME_WORDS_RE = re.compile(
+    r"\d{1,2}[:：]\d{2}(?:\s*[-~—到至]\s*\d{1,2}[:：]\d{2})?"
+    r"|" + _CN_NUM + r"点(?:半|" + _CN_NUM + r"分?)?(?:\s*[-~—到至]\s*" + _CN_NUM + r"点(?:半|" + _CN_NUM + r"分?)?)?"
+    r"|" + _PERIOD
+)
+_MONEY_RE = re.compile(r"[¥￥]\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:元|块钱|块)")
+
+
+def _make_title(line: str, loc_match: Optional["re.Match[str]"]) -> str:
+    """去掉标签、日期、时间、地点和客套话，只留下“要做什么”。"""
+    t = re.sub(r"【.*?】|\[.*?\]", "", line)
+    if loc_match:
+        t = t.replace(loc_match.group(0), " ")
+    t = _DATE_WORDS_RE.sub(" ", t)
+    t = _TIME_WORDS_RE.sub(" ", t)
+    t = re.sub(r"^\s*(?:各位|亲爱的)?(?:同学们?|老师们?|大家|家人们)好?[，,！!：:]?", "", t)
+    segments = [s.strip(" 　") for s in re.split(r"[，,。；;！!\n]", t)]
+    for seg in segments:
+        seg = re.sub(r"^(?:将|要|会)?(?:进行|举行|举办|召开|开展|参加)", "", seg).strip()
+        seg = re.sub(r"\s+", " ", seg)
+        if len(seg) >= 2 and not seg.startswith(("请", "务必", "记得")):
+            return seg[:40]
+    fallback = re.sub(r"【.*?】", "", line).strip()
+    return fallback[:40]
+
+
+def _split_expense_clauses(line: str) -> List[str]:
+    """一句话里有多笔钱时按标点拆开，每段一笔。"""
+    if len(_MONEY_RE.findall(line)) <= 1:
+        return [line]
+    parts = [p.strip() for p in re.split(r"[，,；;。、\n]|\s{2,}", line) if p.strip()]
+    clauses: List[str] = []
+    for p in parts:
+        if _MONEY_RE.search(p) or not clauses:
+            clauses.append(p)
+        else:  # 没有金额的片段并到前一段，作为补充说明
+            clauses[-1] += "，" + p
+    return clauses
+
+
 def parse_text_locally(text: str, mode: str = "auto") -> Dict[str, List[Dict[str, Any]]]:
     """免 AI Key 的本地中文规则解析器，方便直接联调与无图文字提取。"""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -136,45 +221,53 @@ def parse_text_locally(text: str, mode: str = "auto") -> Dict[str, List[Dict[str
     expenses: List[Dict[str, Any]] = []
 
     for line in lines:
-        money = re.search(r"(?:[¥￥]\s*(\d+(?:\.\d{1,2})?))|(?:(\d+(?:\.\d{1,2})?)\s*元)", line)
+        money = _MONEY_RE.search(line)
         has_time = bool(
             re.search(
-                r"(\d{1,2}[:：]\d{2}|[早上午下晚]午?\s*[0-9一二两三四五六七八九十]{1,3}点|明天|后天|今天|周[一二三四五六日天]|\d{1,2}月\d{1,2}[日号])",
+                r"(\d{1,2}[:：]\d{2}|" + _CN_NUM + r"点|明天|后天|今天|(?:周|星期)[一二三四五六日天]|\d{1,2}月\d{1,2}[日号])",
                 line,
             )
         )
 
         if mode != "calendar" and money:
-            amount = float(money.group(1) or money.group(2))
-            item = re.sub(r"(今天|昨天|前天|中午|晚上|早上|花了|消费|支付|买了|吃了)", "", line.replace(money.group(0), "")).strip()
-            expenses.append(
-                {
-                    "date": _extract_chinese_date(line),
-                    "item": item[:24] or "消费记录",
-                    "category": _guess_category(line),
-                    "amount": amount,
-                    "note": "本地文本提取",
-                }
-            )
+            line_date = _extract_chinese_date(line)
+            for clause in _split_expense_clauses(line):
+                for m in _MONEY_RE.finditer(clause):
+                    amount = float(m.group(1) or m.group(2))
+                    item = clause.replace(m.group(0), "")
+                    item = re.sub(r"(今天|昨天|前天|明天|早上|上午|中午|下午|晚上|花了|消费|支付|付了|买了|吃了|喝了)", "", item)
+                    item = re.sub(r"[，,。；;：:\s]+", " ", item).strip()
+                    item = re.sub(r"^(?:在|又|还)", "", item).strip()
+                    has_own_date = bool(_DATE_WORDS_RE.search(clause))
+                    expenses.append(
+                        {
+                            "date": _extract_chinese_date(clause) if has_own_date else line_date,
+                            "item": item[:24] or "消费记录",
+                            "category": _guess_category(clause) if _guess_category(clause) != "其他" else _guess_category(line),
+                            "amount": amount,
+                            "note": "本地文本提取",
+                        }
+                    )
 
-        if mode != "expense" and (has_time or not money):
-            loc = re.search(
-                r"(?:在|地点[：:]?\s*)([A-Za-z0-9\u4e00-\u9fa5\-]+?(?:教室|会议室|楼|室|厅|馆|校区|A\d+|B\d+|C\d+|\d{3}))",
-                line,
-            )
-            title = re.sub(r"【.*?】", "", line).strip()[:28]
-            if title and (has_time or loc):
-                start_t, end_t = _extract_chinese_time(line)
-                events.append(
-                    {
-                        "title": title,
-                        "date": _extract_chinese_date(line),
-                        "startTime": start_t,
-                        "endTime": end_t,
-                        "location": loc.group(1) if loc else "",
-                        "note": line,
-                    }
-                )
+        if mode != "expense":
+            loc = _LOC_RE.search(line)
+            # 记账的句子常带“今天”“在食堂”，带金额的行只有出现具体钟点时才当成日程
+            has_clock = bool(re.search(r"\d{1,2}[:：]\d{2}|" + _CN_NUM + r"点", line))
+            is_event = (has_time or loc) if not money else has_clock
+            if is_event:
+                title = _make_title(line, loc)
+                if title:
+                    start_t, end_t = _extract_chinese_time(line)
+                    events.append(
+                        {
+                            "title": title,
+                            "date": _extract_chinese_date(line),
+                            "startTime": start_t,
+                            "endTime": end_t,
+                            "location": loc.group(1) if loc else "",
+                            "note": line,
+                        }
+                    )
 
     return {"events": events, "expenses": expenses}
 

@@ -1,4 +1,5 @@
 {
+  "miniprogramRoot": "miniprogram/",
   "description": "Snap-to-Calendar 微信小程序",
   "packOptions": {
     "ignore": [],
@@ -28,7 +29,7 @@
     }
   },
   "compileType": "miniprogram",
-  "appid": "wx14b090f911e2cc6b",
+  "appid": "wxff901ea9e92d5927",
   "projectname": "snap-to-calendar-mp",
   "libVersion": "3.3.4",
   "simulatorPluginLibVersion": {},

@@ -11,4 +11,5 @@ Thumbs.db
 miniprogram/miniprogram_npm/
 
 # 微信开发者工具的个人本地设置
+project.private.config.json
 miniprogram/project.private.config.json
