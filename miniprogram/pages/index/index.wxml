@@ -1,0 +1,101 @@
+<view class="page">
+  <!-- 1. 输入区 -->
+  <view class="card">
+    <view class="card-header">
+      <text class="card-title">1. 选截图或粘贴通知</text>
+      <view class="mode-group">
+        <text class="mode-pill {{mode === 'auto' ? 'active' : ''}}" bindtap="setMode" data-mode="auto">智能</text>
+        <text class="mode-pill {{mode === 'calendar' ? 'active' : ''}}" bindtap="setMode" data-mode="calendar">日程</text>
+        <text class="mode-pill {{mode === 'expense' ? 'active' : ''}}" bindtap="setMode" data-mode="expense">账单</text>
+      </view>
+    </view>
+
+    <!-- 图片选择/预览 -->
+    <view class="upload-box" bindtap="chooseImage" wx:if="{{!imagePath}}">
+      <text class="upload-icon">🖼️</text>
+      <text class="upload-text">点击选择群聊通知 / 课表 / 消费截图</text>
+      <text class="upload-sub">支持从相册或微信聊天记录选图</text>
+    </view>
+
+    <view class="preview-box" wx:else>
+      <image class="preview-img" src="{{imagePath}}" mode="aspectFit" />
+      <view class="clear-btn" bindtap="clearImage">✕</view>
+    </view>
+
+    <!-- 文本输入 -->
+    <textarea
+      class="text-area"
+      placeholder="或直接粘贴通知/记账文字（不配 AI Key 也能提取），如：明天下午14:30在教三201开会"
+      value="{{text}}"
+      bindinput="onTextInput"
+      maxlength="2000"
+    />
+
+    <button class="btn-primary" bindtap="runExtract" loading="{{loading}}" disabled="{{loading}}">
+      {{loading ? '正在智能识别...' : '🚀 开始智能提取'}}
+    </button>
+
+    <view class="demo-row">
+      <text class="demo-label">快速体验：</text>
+      <text class="demo-btn" bindtap="loadDemo" data-type="meeting">💬 群聊通知</text>
+      <text class="demo-btn" bindtap="loadDemo" data-type="expense">🧾 消费账单</text>
+    </view>
+  </view>
+
+  <!-- 2. 结果区 -->
+  <view class="card">
+    <view class="tabs">
+      <view class="tab {{activeTab === 'calendar' ? 'active' : ''}}" bindtap="switchTab" data-tab="calendar">
+        📅 日历日程 ({{events.length}})
+      </view>
+      <view class="tab {{activeTab === 'expense' ? 'active' : ''}}" bindtap="switchTab" data-tab="expense">
+        🧾 消费账单 ({{expenses.length}})
+      </view>
+    </view>
+
+    <!-- 日程列表 -->
+    <view wx:if="{{activeTab === 'calendar'}}">
+      <view class="empty" wx:if="{{events.length === 0}}">
+        <text>暂无日程，请先提取或点击上方“群聊通知”示例</text>
+      </view>
+
+      <view wx:else>
+        <button class="btn-success" bindtap="addAllToCalendar">📲 一键全部加入手机日历</button>
+
+        <view class="event-item" wx:for="{{events}}" wx:key="index">
+          <view class="event-top">
+            <text class="event-title">{{item.title}}</text>
+            <text class="btn-mini-add" bindtap="addOneToCalendar" data-index="{{index}}">+ 加日历</text>
+          </view>
+          <view class="event-meta">
+            <text>🕒 {{item.date}} {{item.startTime}}-{{item.endTime}}</text>
+            <text wx:if="{{item.location}}">📍 {{item.location}}</text>
+          </view>
+          <text class="event-note" wx:if="{{item.note}}">{{item.note}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 账单列表 -->
+    <view wx:if="{{activeTab === 'expense'}}">
+      <view class="empty" wx:if="{{expenses.length === 0}}">
+        <text>暂无账单，请先提取或点击上方“消费账单”示例</text>
+      </view>
+
+      <view wx:else>
+        <view class="total-bar">
+          <text>合计：<text class="total-num">¥{{expenseTotal}}</text></text>
+          <text class="btn-mini-export" bindtap="exportExcel">⬇️ 导出 Excel (.csv)</text>
+        </view>
+
+        <view class="exp-item" wx:for="{{expenses}}" wx:key="index">
+          <view class="exp-left">
+            <text class="exp-name">{{item.item}}</text>
+            <text class="exp-sub">{{item.date}} · {{item.category}}</text>
+          </view>
+          <text class="exp-amount">¥{{item.amount}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
